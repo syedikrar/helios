@@ -1,0 +1,30 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: helios-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: helios
+      POSTGRES_PASSWORD: helios
+      POSTGRES_DB: helios
+    ports:
+      # Host 5434 -> container 5432 (avoids clashing with other local Postgres)
+      - "5434:5432"
+    volumes:
+      - helios_pgdata:/var/lib/postgresql/data
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: helios-pgadmin
+    restart: unless-stopped
+    profiles: ["tools"]
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@helios.demo
+      PGADMIN_DEFAULT_PASSWORD: helios
+    ports:
+      - "5050:80"
+    depends_on:
+      - db
+
+volumes:
+  helios_pgdata:

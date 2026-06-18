@@ -1,0 +1,727 @@
+// Helios data model.
+// Phase 1: Organization, User.
+// Phase 2: RBAC — Role, Permission, RolePermission, UserRole.
+// The full domain model (estimating, controls/EVM, STO, etc.) lands in later phases.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id            String   @id @default(cuid())
+  name          String
+  baseCurrency  String   @default("USD")
+  regions       String[] @default([])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+
+  users User[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  title        String?
+  orgId        String
+  org          Organization @relation(fields: [orgId], references: [id])
+  roles        UserRole[]
+  notifications Notification[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  key         String   @unique // RoleKey, e.g. "ESTIMATOR"
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       UserRole[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  key         String   @unique // "module:action", e.g. "estimating:create"
+  module      String
+  action      String
+  description String?
+
+  roles RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model UserRole {
+  userId String
+  roleId String
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+}
+
+// ---------- Phase 3: Foundation ----------
+
+// Cost Library (CESK-equivalent): unit rates, labour norms, parametric models.
+// baseRate is stored in integer minor units (cents).
+model CostLibraryItem {
+  id             String  @id @default(cuid())
+  orgId          String
+  code           String  @unique
+  description    String
+  discipline     String
+  category       String
+  unit           String
+  baseRate       Int     @default(0)
+  currency       String  @default("USD")
+  locationFactor Float   @default(1.0)
+  region         String?
+  source         String?
+
+  // Parametric equipment cost model: cost = paramBase * (param ^ paramExponent)
+  isParametric   Boolean @default(false)
+  paramName      String?
+  paramUnit      String?
+  paramBase      Int?    // minor units
+  paramExponent  Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  @@index([discipline, category])
+}
+
+enum ConnectorStatus {
+  CONNECTED
+  DISCONNECTED
+  ERROR
+}
+
+enum SyncDirection {
+  IMPORT
+  EXPORT
+}
+
+// Mocked external integration (SAP, P6, Maximo, UniSim, BI, ...).
+model Connector {
+  id          String          @id @default(cuid())
+  orgId       String
+  key         String          @unique
+  name        String
+  category    String
+  description String?
+  status      ConnectorStatus @default(CONNECTED)
+  lastSyncAt  DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  logs SyncLog[]
+}
+
+model SyncLog {
+  id          String        @id @default(cuid())
+  connectorId String
+  connector   Connector     @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+  direction   SyncDirection
+  status      String        @default("SUCCESS")
+  message     String
+  recordCount Int           @default(0)
+  createdAt   DateTime      @default(now())
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+}
+
+// Immutable log of mutating actions (who/what/when/before→after).
+model AuditLog {
+  id         String      @id @default(cuid())
+  orgId      String
+  userId     String?
+  userEmail  String?
+  action     AuditAction
+  entityType String
+  entityId   String?
+  summary    String
+  before     Json?
+  after      Json?
+  createdAt  DateTime    @default(now())
+
+  @@index([entityType, createdAt])
+}
+
+enum ApprovalStatus {
+  DRAFT
+  SUBMITTED
+  IN_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum ApprovalEventType {
+  SUBMIT
+  REVIEW
+  APPROVE
+  REJECT
+  COMMENT
+}
+
+// Generic approval workflow attachable to any entity (estimates, changes, ...).
+model ApprovalRequest {
+  id            String         @id @default(cuid())
+  orgId         String
+  entityType    String
+  entityId      String
+  title         String
+  status        ApprovalStatus @default(SUBMITTED)
+  submittedById String
+  submittedBy   String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  events ApprovalEvent[]
+}
+
+model ApprovalEvent {
+  id         String            @id @default(cuid())
+  requestId  String
+  request    ApprovalRequest   @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  type       ApprovalEventType
+  actorId    String
+  actorEmail String
+  comment    String?
+  createdAt  DateTime          @default(now())
+}
+
+// In-app notification for a recipient user.
+model Notification {
+  id        String   @id @default(cuid())
+  orgId     String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String   @default("INFO")
+  title     String
+  body      String?
+  link      String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, read])
+}
+
+// Threaded comment on any entity (collaboration).
+model Comment {
+  id         String   @id @default(cuid())
+  orgId      String
+  entityType String
+  entityId   String
+  authorId   String
+  authorName String
+  body       String
+  parentId   String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+}
+
+// ---------- Phase 4: CAPEX core ----------
+
+enum ProjectType {
+  CAPEX
+  STO
+}
+
+enum ProjectStatus {
+  PLANNING
+  EXECUTION
+  CLOSED
+}
+
+enum AaceClass {
+  CLASS_5
+  CLASS_4
+  CLASS_3
+  CLASS_2
+  CLASS_1
+}
+
+enum EstimateMethod {
+  PARAMETRIC
+  FACTOR
+  SEMI_DETAILED
+  DETAILED
+}
+
+enum EstimateStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  BASELINED
+}
+
+enum ChangeStatus {
+  OPEN
+  ASSESSED
+  APPROVED
+  REJECTED
+}
+
+enum TenderStatus {
+  OPEN
+  EVALUATING
+  AWARDED
+  CANCELLED
+}
+
+enum ContractType {
+  LUMP_SUM
+  REIMBURSABLE
+  HYBRID
+}
+
+model Portfolio {
+  id          String    @id @default(cuid())
+  orgId       String
+  name        String
+  description String?
+  createdAt   DateTime  @default(now())
+  projects    Project[]
+}
+
+model Project {
+  id          String        @id @default(cuid())
+  orgId       String
+  portfolioId String?
+  portfolio   Portfolio?    @relation(fields: [portfolioId], references: [id])
+  code        String        @unique
+  name        String
+  description String?
+  type        ProjectType   @default(CAPEX)
+  status      ProjectStatus @default(EXECUTION)
+  currency    String        @default("USD")
+  region      String?
+  startDate   DateTime?
+  endDate     DateTime?
+  createdById String
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  deletedAt   DateTime?
+
+  estimates      Estimate[]
+  baseline       Baseline?
+  controlPeriods ControlPeriod[]
+  changes        ChangeRequest[]
+  risks          Risk[]
+  activities     ScheduleActivity[]
+  tenders        Tender[]
+  contracts      Contract[]
+}
+
+model Estimate {
+  id             String         @id @default(cuid())
+  orgId          String
+  projectId      String
+  project        Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  code           String
+  name           String
+  aaceClass      AaceClass      @default(CLASS_5)
+  method         EstimateMethod @default(FACTOR)
+  status         EstimateStatus @default(DRAFT)
+  currency       String         @default("USD")
+  contingencyPct Float          @default(10)
+  indirectPct    Float          @default(15)
+  version        Int            @default(1)
+  createdById    String
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  lineItems EstimateLineItem[]
+  baseline  Baseline?
+}
+
+model EstimateLineItem {
+  id                String   @id @default(cuid())
+  estimateId        String
+  estimate          Estimate @relation(fields: [estimateId], references: [id], onDelete: Cascade)
+  costLibraryItemId String?
+  code              String?
+  description       String
+  discipline        String?
+  category          String?
+  unit              String
+  quantity          Float    @default(0)
+  unitRate          Int      @default(0) // minor units
+  carbonFactor      Float    @default(0) // kgCO2e per unit (ESG)
+  sortOrder         Int      @default(0)
+}
+
+// A frozen estimate becomes the cost baseline (BAC).
+model Baseline {
+  id         String   @id @default(cuid())
+  projectId  String   @unique
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  estimateId String   @unique
+  estimate   Estimate @relation(fields: [estimateId], references: [id])
+  name       String
+  bac        Int      @default(0) // budget at completion, minor units
+  setById    String
+  createdAt  DateTime @default(now())
+}
+
+// Per-period EVM inputs (incremental). PV/EV/AC stored server-side.
+model ControlPeriod {
+  id           String   @id @default(cuid())
+  projectId    String
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  periodIndex  Int
+  label        String
+  plannedValue Int      @default(0) // PV incremental, minor units
+  earnedValue  Int      @default(0) // EV incremental
+  actualCost   Int      @default(0) // AC incremental
+  createdAt    DateTime @default(now())
+
+  @@unique([projectId, periodIndex])
+}
+
+model ChangeRequest {
+  id          String       @id @default(cuid())
+  orgId       String
+  projectId   String
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ref         String
+  title       String
+  description String?
+  costImpact  Int          @default(0) // minor units, +/-
+  timeImpact  Int          @default(0) // days
+  status      ChangeStatus @default(OPEN)
+  raisedById  String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model Risk {
+  id           String   @id @default(cuid())
+  orgId        String
+  projectId    String
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ref          String
+  title        String
+  category     String?
+  probability  Float    @default(0.3) // 0..1
+  impactCost   Int      @default(0)   // minor units
+  response     String?
+  owner        String?
+  status       String   @default("OPEN")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model ScheduleActivity {
+  id           String   @id @default(cuid())
+  projectId    String
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  wbs          String?
+  name         String
+  startDate    DateTime
+  endDate      DateTime
+  percentComplete Float @default(0)
+  predecessors String?  // comma-separated activity refs
+  sortOrder    Int      @default(0)
+}
+
+model Tender {
+  id          String       @id @default(cuid())
+  orgId       String
+  projectId   String
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ref         String
+  title       String
+  referenceEstimate Int    @default(0) // minor units
+  status      TenderStatus @default(OPEN)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  bids Bid[]
+}
+
+model Bid {
+  id        String   @id @default(cuid())
+  tenderId  String
+  tender    Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  vendor    String
+  amount    Int      @default(0) // minor units
+  score     Float?   // evaluation score 0..100
+  notes     String?
+  awarded   Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Contract {
+  id        String       @id @default(cuid())
+  orgId     String
+  projectId String
+  project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ref       String
+  vendor    String
+  type      ContractType @default(LUMP_SUM)
+  value     Int          @default(0) // minor units
+  createdAt DateTime     @default(now())
+}
+
+// Reference cost data for benchmarking (anonymised cross-project).
+model BenchmarkRecord {
+  id          String   @id @default(cuid())
+  orgId       String
+  name        String
+  metric      String   // e.g. "$/m2", "$/tonne", "hrs/unit"
+  value       Float
+  unit        String
+  discipline  String?
+  region      String?
+  year        Int?
+  source      String?
+  createdAt   DateTime @default(now())
+}
+
+// ---------- Phase 5: Turnaround / STO ----------
+
+enum ScopeStatus {
+  IDENTIFIED
+  APPROVED
+  IN_WORKPACK
+  COMPLETE
+}
+
+enum WorkPackStatus {
+  PLANNED
+  READY
+  IN_PROGRESS
+  COMPLETE
+  ON_HOLD
+}
+
+enum MaterialStatus {
+  REQUIRED
+  ORDERED
+  RECEIVED
+  SHORTAGE
+}
+
+enum WeldStatus {
+  FIT_UP
+  WELDED
+  INSPECTED
+  ACCEPTED
+  REJECTED
+}
+
+enum NdeResult {
+  PENDING
+  PASS
+  FAIL
+}
+
+enum NcrStatus {
+  OPEN
+  IN_REVIEW
+  CLOSED
+}
+
+enum SafeguardType {
+  PTW
+  ISOLATION
+  CONFINED_SPACE
+  HOT_WORK
+}
+
+enum SafeguardStatus {
+  OPEN
+  ACTIVE
+  CLOSED
+}
+
+model ScopeItem {
+  id             String      @id @default(cuid())
+  orgId          String
+  projectId      String
+  workPackId     String?
+  ref            String
+  description    String
+  discipline     String
+  equipmentTag   String?
+  priority       String      @default("MEDIUM") // HIGH/MEDIUM/LOW
+  estimatedHours Float       @default(0)
+  status         ScopeStatus @default(IDENTIFIED)
+  createdAt      DateTime    @default(now())
+
+  @@index([projectId])
+}
+
+model WorkPack {
+  id              String         @id @default(cuid())
+  orgId           String
+  projectId       String
+  ref             String
+  title           String
+  discipline      String
+  plannedHours    Float          @default(0)
+  hoursBurned     Float          @default(0)
+  progressPercent Float          @default(0)
+  contractor      String?
+  status          WorkPackStatus @default(PLANNED)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  materials Material[]
+
+  @@index([projectId])
+}
+
+model Material {
+  id          String         @id @default(cuid())
+  workPackId  String
+  workPack    WorkPack       @relation(fields: [workPackId], references: [id], onDelete: Cascade)
+  partNo      String
+  description String
+  quantity    Float          @default(0)
+  unit        String         @default("ea")
+  status      MaterialStatus @default(REQUIRED)
+  supplier    String?
+  createdAt   DateTime       @default(now())
+}
+
+model Welder {
+  id            String       @id @default(cuid())
+  orgId         String
+  stamp         String       @unique
+  name          String
+  process       String?      // e.g. GTAW, SMAW
+  certification String?
+  certExpiry    DateTime?
+  createdAt     DateTime     @default(now())
+  welds         WeldRecord[]
+}
+
+model Wps {
+  id          String       @id @default(cuid())
+  orgId       String
+  ref         String       @unique
+  description String
+  process     String?
+  baseMetal   String?
+  fillerMetal String?
+  createdAt   DateTime     @default(now())
+  welds       WeldRecord[]
+  pqrs        Pqr[]
+}
+
+model Pqr {
+  id          String   @id @default(cuid())
+  orgId       String
+  ref         String   @unique
+  wpsId       String?
+  wps         Wps?     @relation(fields: [wpsId], references: [id])
+  description String
+  createdAt   DateTime @default(now())
+}
+
+model WeldRecord {
+  id         String     @id @default(cuid())
+  orgId      String
+  projectId  String
+  workPackId String?
+  weldId     String
+  joint      String?
+  lineIso    String?    // line / isometric drawing reference (for LISL)
+  welderId   String?
+  welder     Welder?    @relation(fields: [welderId], references: [id])
+  wpsId      String?
+  wps        Wps?       @relation(fields: [wpsId], references: [id])
+  pqrRef     String?
+  heatNo     String?    // material traceability
+  ndeResult  NdeResult  @default(PENDING)
+  status     WeldStatus @default(FIT_UP)
+  createdAt  DateTime   @default(now())
+
+  @@index([projectId, lineIso])
+}
+
+model QaCheck {
+  id         String   @id @default(cuid())
+  orgId      String
+  projectId  String
+  workPackId String?
+  weldId     String?
+  checklist  String
+  result     String   @default("PENDING") // PASS/FAIL/PENDING
+  inspector  String?
+  note       String?
+  createdAt  DateTime @default(now())
+
+  @@index([projectId])
+}
+
+model Ncr {
+  id          String    @id @default(cuid())
+  orgId       String
+  projectId   String
+  ref         String
+  title       String
+  description String?
+  severity    String    @default("MINOR") // MINOR/MAJOR/CRITICAL
+  status      NcrStatus @default(OPEN)
+  raisedBy    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([projectId])
+}
+
+model SafeguardItem {
+  id          String          @id @default(cuid())
+  orgId       String
+  projectId   String
+  workPackId  String?
+  type        SafeguardType   @default(PTW)
+  title       String
+  status      SafeguardStatus @default(OPEN)
+  responsible String?
+  createdAt   DateTime        @default(now())
+
+  @@index([projectId])
+}
+
+model LessonLearned {
+  id              String   @id @default(cuid())
+  orgId           String
+  projectId       String
+  category        String
+  description     String
+  recommendation  String?
+  pushedToLibrary Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  @@index([projectId])
+}

@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-navy-50 text-navy-900 antialiased;
+  }
+}
+
+@layer components {
+  .h-card {
+    @apply rounded-xl border border-navy-100 bg-white shadow-sm;
+  }
+  .h-pill {
+    @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium;
+  }
+}

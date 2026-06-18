@@ -1,0 +1,26 @@
+{
+  "name": "helios",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Helios — Total Cost & Turnaround Management Platform (monorepo)",
+  "scripts": {
+    "types:build": "pnpm --filter @helios/types build",
+    "dev": "pnpm types:build && concurrently -n api,web -c blue,green \"pnpm --filter @helios/api start:dev\" \"pnpm --filter @helios/web dev\"",
+    "build": "pnpm --filter @helios/api exec prisma generate && pnpm types:build && pnpm --filter @helios/api build && pnpm --filter @helios/web build",
+    "heroku-postbuild": "pnpm run build",
+    "start": "node apps/api/dist/main.js",
+    "migrate": "pnpm --filter @helios/api prisma:migrate",
+    "migrate:deploy": "pnpm --filter @helios/api exec prisma migrate deploy",
+    "seed": "pnpm --filter @helios/api seed",
+    "db:up": "docker-compose up -d",
+    "db:down": "docker-compose down"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1"
+  },
+  "engines": {
+    "node": "20.x",
+    "pnpm": "9.x"
+  },
+  "packageManager": "pnpm@9.12.3"
+}

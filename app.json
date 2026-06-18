@@ -1,0 +1,26 @@
+{
+  "name": "Helios",
+  "description": "Total Cost & Turnaround Management Platform — estimating, EVM, and turnaround execution.",
+  "repository": "https://github.com/syedikrar/helios",
+  "keywords": ["nestjs", "react", "prisma", "cost-management", "evm"],
+  "stack": "heroku-24",
+  "buildpacks": [{ "url": "heroku/nodejs" }],
+  "addons": [{ "plan": "heroku-postgresql:essential-0" }],
+  "env": {
+    "JWT_SECRET": {
+      "description": "Secret used to sign JWT access tokens.",
+      "generator": "secret"
+    },
+    "JWT_EXPIRES_IN": {
+      "description": "JWT lifetime.",
+      "value": "1d"
+    },
+    "NPM_CONFIG_PRODUCTION": {
+      "description": "Install dev dependencies during build (needed for the build tools).",
+      "value": "false"
+    }
+  },
+  "formation": {
+    "web": { "quantity": 1, "size": "basic" }
+  }
+}
