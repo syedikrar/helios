@@ -166,6 +166,26 @@ at **GitHub → repo → Settings → Secrets and variables → Actions → New 
 After that, `git push origin main` builds and deploys automatically — no manual
 `git push heroku` needed. Watch progress in the repo's **Actions** tab.
 
+## Deploy free on Render (no card for the app)
+
+Render runs the app on a free web service (Heroku-like). A `render.yaml` blueprint
+is included, so it's almost one-click.
+
+1. Push this repo to GitHub (done above).
+2. Go to **https://dashboard.render.com** → **New → Blueprint** → connect your
+   GitHub and select the **`helios`** repo. Render reads `render.yaml` and proposes
+   a **web service + free Postgres**. Click **Apply**.
+3. Wait for the build. On start it runs `prisma migrate deploy` + seed, then serves
+   the app at **`https://helios-XXXX.onrender.com`**. Log in with
+   `admin@helios.demo` / `Helios@Demo123`.
+
+**Free-tier notes**
+- The web service **sleeps after ~15 min idle**; the next request wakes it (~50s).
+- Render's **free Postgres expires after 30 days**. For a permanent free database,
+  create one at **https://neon.tech** (free) and set `DATABASE_URL` on the Render
+  service to the Neon connection string (Neon URLs already include `?sslmode=require`),
+  then remove the `databases:` block from `render.yaml`.
+
 ## Demo script
 
 A 5-minute walkthrough covering both worlds on seeded data.

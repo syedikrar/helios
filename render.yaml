@@ -1,0 +1,26 @@
+# Render.com blueprint — free full-stack deploy (web service + Postgres).
+# One NestJS service builds and serves the React SPA + API.
+# Migrations + idempotent seed run on container start (free tier has no
+# separate release/pre-deploy phase).
+services:
+  - type: web
+    name: helios
+    runtime: node
+    plan: free
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm run build
+    startCommand: pnpm run migrate:deploy && pnpm run seed && pnpm run start
+    envVars:
+      - key: NODE_VERSION
+        value: 20.19.4
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 1d
+      - key: DATABASE_URL
+        fromDatabase:
+          name: helios-db
+          property: connectionString
+
+databases:
+  - name: helios-db
+    plan: free
